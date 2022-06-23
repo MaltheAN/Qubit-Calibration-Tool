@@ -43,11 +43,11 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
             self.scoringName = "Fidelity"
 
             # Esitmate 0/1 mean (number)
-            mean0, sigma0 = np.mean(v0), np.std(v0)
-            mean1, sigma1 = np.mean(v1), np.std(v1)
+            mean0, sigma0 = np.mean(v0), np.std(v0) / np.sqrt(len(v0))
+            mean1, sigma1 = np.mean(v1), np.std(v1) / np.sqrt(len(v1))
 
             # Esitmate rel distance
-            dist00, dist01 = np.abs(v0 - mean0), np.abs(v0 - mean1)
+            #dist00, dist01 = np.abs(v0 - mean0), np.abs(v0 - mean1)
             dist0, dist1 = np.abs(v1 - mean0), np.abs(v1 - mean1)
 
             # Counts of 0/1 values
