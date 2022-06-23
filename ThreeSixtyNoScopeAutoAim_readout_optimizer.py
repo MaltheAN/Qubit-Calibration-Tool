@@ -28,11 +28,16 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
             readoutVariable="Pulse Generator - Single-shot, QB1",
             oldData=None,
         ):
+
+            if oldData:
+                self.oldData = oldData
+            else:
+                self.oldData = {"value":[], "scoring":[]}
             if fPath != None:
                 self.loopOverEntries(fPath, readoutVariable, stepChannelName)
 
                 if plot == True:
-                    self.plotScoring(oldData)
+                    self.plotScoring()
 
         def calculateFidelity(self, v0, v1):
             self.scoringName = "Fidelity"
@@ -51,9 +56,11 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
 
             # Calulate outputs
             fidelity = 1 - n0 / float(n0 + n1)
-            error = 1 / np.sqrt(n0)
+         
+            w = (dist1 / sigma1) / (dist0 / sigma0)
+            error = np.std(w) / np.sqrt(n0)
 
-            return fidelity, error
+            return fidelity, error 
 
         def loopOverEntries(
             self,
@@ -89,6 +96,8 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
                 i: np.zeros(len(self.paramValues)) for i in ["value", "error"]
             }
 
+            self.scoring["paramValue"] = self.paramValues
+
             # loop over values
             for n, val in enumerate(self.paramValues):
                 # get data for qubit 0/1
@@ -100,23 +109,29 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
                     self.scoring["error"][n],
                 ) = self.calculateFidelity(v0, v1)
 
-        def plotScoring(self, oldData=None):
+        def plotScoring(self):
             plt.figure()
 
-            with contextlib.suppress(Exception):
-                for oldDatai in oldData:
-                    plt.errorbar(
-                        self.paramValues / self.paramScaling,
-                        oldDatai["value"],
-                        oldDatai["error"],
-                        fmt="",
-                    )
+            for i, value in enumerate(self.oldData["value"]):
+                plt.errorbar(
+                    self.oldData["paramValue"][i] / self.paramScaling,
+                    value,
+                    self.oldData["error"][i],
+                    fmt="",
+                )
             plt.errorbar(
                 self.paramValues / self.paramScaling,
                 self.scoring["value"],
                 self.scoring["error"],
                 fmt="",
             )
+
+            from scipy.signal import savgol_filter
+            fittedArray = savgol_filter(self.scoring["value"], 5, 3)
+            plt.plot(self.paramValues / self.paramScaling, fittedArray)
+
+
+
             plt.title(
                 "{}\n {} vs {}".format(self.fileName, self.scoringName, self.paramName)
             )
@@ -163,28 +178,29 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
             self.Lfile = Labber.LogFile(self.fPath)
 
             self.params = {
+                "RS Pump - Power": [],
+                "RS Pump - Frequency": [],
                 "RS Readout - Frequency": [],
                 "RS Readout - Power": [],
-                "RS Pump - Power": [],
                 "Pulse Generator - Demodulation - Length": [],
-                "RS Drive 1 - Frequency": [],
-                "Pulse Generator - Amplitude #1": [],
+
             }
 
             self._updateDirLabber()
 
-            for key, value in param.items():
-                if value is None:
-                    del self.spans[key]
-                    del self.params[key]
+            if param:
+                for key, value in param.items():
+                    if value is None:
+                        del self.spans[key]
+                        del self.params[key]
 
-                else:
-                    self.params[key] = value
-                    if key not in self.spans.keys():
-                        self.spans[key] = []
-                        print(
-                            f"Please set intial span for paramter {key}, by calling 'self.spans[{key}] = inital value'"
-                        )
+                    else:
+                        self.params[key] = value
+                        if key not in self.spans.keys():
+                            self.spans[key] = []
+                            print(
+                                f"Please set intial span for paramter {key}, by calling 'self.spans[{key}] = inital value'"
+                            )
 
             self._checkDirLabber()
 
@@ -206,23 +222,24 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
 
             self._checkDirLabber()
 
-            for key, value in span.items():
-                if value is None:
-                    del self.spans[key]
-                    del self.params[key]
+            if span:
+                for key, value in span.items():
+                    if value is None:
+                        del self.spans[key]
+                        del self.params[key]
 
-                else:
-                    self.spans[key] = value
-                    if key not in self.params.keys():
-                        self.params[key] = []
-                        print(
-                            f"Please set intial value for paramter {key}, by calling 'self.param[{key}] = inital value'"
-                        )
+                    else:
+                        self.spans[key] = value
+                        if key not in self.params.keys():
+                            self.params[key] = []
+                            print(
+                                f"Please set intial value for paramter {key}, by calling 'self.param[{key}] = inital value'"
+                            )
 
             self._checkDirLabber()
 
     def _checkDirLabber(self):
-        for key in self.params.copy() and self.spans.copy():
+        for key in self.params.copy() or self.spans.copy():
             if key in [d["name"] for d in self.Lfile.getStepChannels()] == False:
                 print("Removed: {} \nAdd it to Step Channels in Labber.\n".format(key))
                 del self.params[key]
@@ -239,6 +256,9 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
                     )
                     del self.params[key]
             except Exception:
+                print(
+                        "Removed: {} \nAdd it to Step Channels in Labber.\n".format(key)
+                    )
                 del self.params[key]
 
     def setScanParams(
@@ -292,21 +312,26 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
                     )
 
                 # Second scan (fin scan)
+                self.scorings = {"value":[], "error":[], "paramValue":[]}
+
                 for _ in range(self.numberOfPasses):
-                    self.oldData = []
                     Lfilename = msmt_data.performMeasurement(return_data=False)
 
-                    paramPeak, paramStepsize, oldDatai = self.FidelitySS(
+                    paramPeak, paramStepsize, scorings_i = self.FidelitySS(
                         Lfilename,
                         plot=self.plot,
                         stepChannelName=param,
-                        oldData=self.oldData,
+                        oldData=self.scorings,
                     ).value()
-                    self.oldData.append(oldDatai)
-                    print(param, paramPeak, paramStepsize)
+                    
+                    for key in self.scorings:
+                        self.scorings[key].append(scorings_i[key])
 
+                    print(param, paramPeak, paramStepsize)
+                    span = 2 * (paramStepsize / (self.numberOfPoints + 2)) * self.numberOfPoints
+
+                    msmt_data.updateValue(param, span, itemType="SPAN")
                     msmt_data.updateValue(param, paramPeak, itemType="CENTER")
-                    msmt_data.updateValue(param, 2 * paramStepsize, itemType="SPAN")
                     msmt_data.updateValue(param, self.numberOfPoints, itemType="N_PTS")
 
                 # update value and params
@@ -371,6 +396,19 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
 
         msmt_final.performMeasurement(return_data=False)
 
-
+"""
 fPath = "C:\\Users\\T5_2\Desktop\\Q2 Calibration\\q2_SS_temp_optimized_newdemod.hdf5"
+fPath = "C:\\Users\\T5_2\\Desktop\\Qubit calibration data\\Q5\\q5_SS_drive_onoff.hdf5"
+
 Three = ThreeSixtynNoScopeAutoAim_readout_optimizer(fPath, run=False, plot=True)
+Three.setScanParams(numberOfInitalPoints=10, numberOfPoints=8, numberOfReplabs=10)
+Three.setSpans({"RS Readout - Power": 10})
+
+Three.run()
+Three.runOutput()
+"""
+
+Olddata = r"C:\Users\T5_2\Desktop\Qubit calibration data\Q5\q5_SS_drive_onoff_gen_data\q5_SS_drive_onoff_19_test.hdf5"
+
+Three = ThreeSixtynNoScopeAutoAim_readout_optimizer()
+Three.FidelitySS(Olddata, plot=True)
