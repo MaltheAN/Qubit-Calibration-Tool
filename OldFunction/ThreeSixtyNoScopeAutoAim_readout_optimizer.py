@@ -1,7 +1,8 @@
+from cProfile import label
 import Labber
-import contextlib
 import numpy as np
 import matplotlib.pyplot as plt
+from savitzky_golay_werrors import *
 
 
 class ThreeSixtynNoScopeAutoAim_readout_optimizer:
@@ -146,6 +147,12 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
             Args:
                 oldData (array, optional): Data from experiment. Defaults to None.
             """
+
+            from scipy.signal import savgol_filter
+            from numpy.polynomial import polynomial as P
+            import warnings
+            import scipy
+
             plt.figure()
 
             for i, value in enumerate(self.oldData["value"]):
@@ -162,14 +169,49 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
                 fmt="",
             )
 
-            from scipy.signal import savgol_filter
+            degree = 6
+            xmin, xmax = (
+                np.min(self.paramValues / self.paramScaling),
+                np.max(self.paramValues / self.paramScaling),
+            )
+            xLinspace = np.linspace(xmin, xmax, 10)
 
             fittedArray = savgol_filter(self.scoring["value"], 5, 3)
-            plt.plot(self.paramValues / self.paramScaling, fittedArray)
+            fittedArrayWithError = savgol_filter_werror(
+                self.scoring["value"], 5, 3, error=self.scoring["error"]
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", np.RankWarning)
+                z = np.polyfit(
+                    self.paramValues / self.paramScaling,
+                    self.scoring["value"],
+                    deg=degree,
+                    w=self.scoring["error"],
+                )
+
+            funcPoly = np.poly1d(z)
+            self.result = scipy.optimize.minimize_scalar(
+                -funcPoly, bounds=(xmin, xmax), method="bounded"
+            )
+
+            plt.plot(
+                self.paramValues / self.paramScaling, fittedArray, label="Normal SG"
+            )
+
+            plt.plot(
+                self.paramValues / self.paramScaling,
+                fittedArrayWithError,
+                label="Error SG",
+            )
+
+            plt.plot(xLinspace, funcPoly(xLinspace), label="Poly fit")
 
             plt.title(f"{self.fileName}\n {self.scoringName} vs {self.paramName}")
             plt.xlabel(f"{self.paramName} [{self.paramUnit}]")
             plt.ylabel(self.scoringName)
+
+            plt.legend()
             plt.show()
 
         def value(self):
@@ -180,8 +222,8 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
                 paramStepsize (float): The size of the steps
                 oldDatai (array): The old data values
             """
-            max_arg = np.argmax(self.scoring["value"])
-            return self.paramValues[max_arg], self.paramStepsize, self.scoring
+            # max_arg = np.argmax(self.scoring["value"]) self.paramValues[max_arg]
+            return self.result.x, self.paramStepsize, self.scoring
 
         def _get_file_name_from_path(self, part="tail"):
             """Small function for getting the hit and sale of path.
@@ -212,7 +254,7 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
 
     def setParams(self, param=None):
         if self.fPath is None:
-            print("set file path (fPath)")
+            print("setParams: set file path (fPath)")
             self.params = None
         else:
             self.Lfile = Labber.LogFile(self.fPath)
@@ -245,7 +287,7 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
 
     def setSpans(self, span=None):
         if self.fPath is None:
-            print("set file path (fPath)")
+            print("setSpans: set file path (fPath)")
             self.spans = None
         else:
             self.Lfile = Labber.LogFile(self.fPath)
