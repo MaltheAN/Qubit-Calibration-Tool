@@ -1,53 +1,8 @@
-import Labber
-import numpy as np
-from dataclasses import dataclass
-from SupportFunction import SupportFunction as SF
-from EvaluationFunctions import Fidelity
-
-
-@dataclass
-class Param:
-    name: str
-    value: float = None
-    span: float = None
-    scaling: float = None
-    unit: str = None
-    remove: bool = False
-
-    def __repr__(self):
-        if len(str(self.value)) > 25:
-            value_str = f"{str(self.value)[:25]}..."
-        else:
-            value_str = str(self.value)
-        return f"{self.name}: {value_str} \u00B1 {self.span}"
-
-
-@dataclass
-class Data:
-    data: float
-    error: float = None
-    name: str = None
-    patameter_name: str = None
-    patemeter_values: float = None
-
-    def __repr__(self):
-        if len(str(self.data)) > 25:
-            data_str = f"{str(self.data)[:25]}..."
-        else:
-            data_str = str(self.data)
-
-        if len(str(self.error)) > 25:
-            error_str = f"{str(self.error)[:25]}..."
-        else:
-            error_str = str(self.error)
-
-        return f"name: {self.name} \ndata: {data_str} \nerror: {error_str}"
-
-
 class LabberController:
-    def __init__(self, file_path):
+    def __init__(self, file_path, method="Fidelity"):
         self.file_path = file_path
         self.file_path_copy = file_path
+        self.method = method
 
         self._set_labber_object()
         self._set_inital_paramaters()
@@ -122,11 +77,8 @@ class LabberController:
 
     def run(self):
         # TODO: This function is not done!
-        def _make_labber_object(self, param):
-            return Labber.ScriptTools.MeasurementObject(
-                self.file_path_copy,
-                SF.save_labber_file(self.file_path, parameter=param.name),
-            )
+        def _make_labber_object(self, param, name):
+            return Labber.ScriptTools.MeasurementObject(self.file_path_copy, name)
 
         def _inital_run(self, meas_obj):
             if self.inital_scan:
@@ -141,11 +93,13 @@ class LabberController:
             data = Labber.LogFile(filepath).getData()
             return data[::2], data[1::2]
 
+        data_list = []
         for _ in range(self.n_replabs):
             for param in self.parameters:
 
                 # Cunstruct measurement object
-                meas_obj = _make_labber_object(self, param)
+                meas_name = SF.save_labber_file(self.file_path, parameter=param.name)
+                meas_obj = _make_labber_object(self, param, meas_name)
 
                 # First scan (if True)
                 _inital_run(self, meas_obj)
@@ -156,7 +110,16 @@ class LabberController:
                     v0, v1 = _get_data_from_file(filepath)
 
                     # Evaluate Result
-                    results = Fidelity([v0, v1]).result()
+                    values, errors = Eval(
+                        [v0, v1], method=self.method, other=self
+                    ).result()
+                    Data(
+                        data=values,
+                        errors=errors,
+                        name=meas_name,
+                        parameter_name=param.name,
+                        parameter_values=param.values,
+                    )
 
                     # Old function:
                     """
@@ -199,14 +162,3 @@ class LabberController:
 
         msmt_final.performMeasurement(return_data=False)"""
         pass
-
-
-if __name__ == "__main__":
-    dummyFile = "SampleData/q5_SS_drive_onoff_19_test.hdf5"
-
-    TupaName = "RS Pump"
-    ReadoutName = "RS Readout"
-    PulseGeneratorName = "Pulse Generator"
-
-    test = LabberController(dummyFile)
-
