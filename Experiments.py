@@ -1,11 +1,24 @@
 from SupportFunction import SupportFunction as sf
 from EvaluationFunctions import Eval
-from Controllers import Param, Data, LabberController
+from Controllers import Param, Data
 from main import Config
 import numpy as np
 
 
 class SingleShotCalibration:
+    # Atom:
+    # Check_data_scan + Analyis
+    # Calibatrion_data + Analyis
+    # Tolorance
+    # Periode of belive (0 = inf)
+    # Dit with params (when (time), state = (good, bad), methods, qubit number
+
+    # Node:
+    # check_state
+    # qubit number
+
+    # Qubit number
+
     def __init__(self, file_path, config=None):
         self.file_path = file_path
         self.file_path_temp = file_path
@@ -14,6 +27,20 @@ class SingleShotCalibration:
 
         self._set_inital_paramaters()
         self.set_sweep_parameters()
+
+    def _initialize_controller(self):
+        self.controller = self.config.controller(
+            file_path=self.file_path,
+            parameters=self.parameters,
+            method=self.config.method,
+            config=self.config,
+        )
+
+    def set_parameters(self, **kwargs):
+        self.controller.set_parameters(**kwargs)
+
+    def get_parameters(self, **kwargs):
+        self.controller.get_parameters(**kwargs)
 
     def _set_inital_paramaters(self):
         self.parameters = [
@@ -47,14 +74,6 @@ class SingleShotCalibration:
     def run(self):
         def _new_span(self, step_size):
             return 2 * (step_size / (self.n_points + 2)) * self.n_points
-
-        # Initialize controller
-        self.controller = self.config.controller(
-            file_path=self.file_path,
-            parameters=self.parameters,
-            method=self.config.method,
-            config=self.config,
-        )
 
         self.data_list = []
         for _ in range(self.n_replabs):

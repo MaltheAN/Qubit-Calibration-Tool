@@ -1,6 +1,4 @@
 import numpy as np
-from pip import main
-
 
 def calculate_fidelity(v0, v1):
     """Function to calculate fidelity. Returns the fidelity with a given error, given v0 and v1.

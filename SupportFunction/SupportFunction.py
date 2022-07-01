@@ -70,6 +70,17 @@ def round_on_error(value, error):
     return value // significant_digits * significant_digits
 
 
+def prettyprint(x, baseunit):
+    import decimal
+
+    prefix = "yzafpnµm kMGTPEZY"
+    shift = decimal.Decimal("1E24")
+
+    d = (decimal.Decimal(str(x)) * shift).normalize()
+    m, e = d.to_eng_string().split("E")
+    return f"{m} {prefix[int(e)//3]}{baseunit}"
+
+
 if __name__ == "__main__":
     parent_file = "/Users/malthenielsen/Desktop/test/q5_SS_drive_onoff_19_test.hdf5"
     path = save_labber_file(

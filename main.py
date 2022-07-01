@@ -38,9 +38,10 @@ class Config:
         elif controller == "Dommy":
             self.controller = DommyController
 
-    def set_evaluator(self, evaluator="Fidelity"):
-        from EvaluationFunctions import Eval, calculate_fidelity
+        else:
+            self.controller = controller
 
+    def set_evaluator(self, evaluator="Fidelity"):
         self.eval_method = evaluator
 
     def set_method(self, method="Fidelity"):
@@ -52,4 +53,6 @@ if __name__ == "__main__":
 
     filepath = "SampleData/q5_SS_drive_onoff_19_test.hdf5"
     ss = SingleShotCalibration(filepath)
+    ss.run()
+    
 
