@@ -1,11 +1,20 @@
+from cProfile import label
 import Labber
-import contextlib
 import numpy as np
 import matplotlib.pyplot as plt
+from savitzky_golay_werrors import *
 
 
 class ThreeSixtynNoScopeAutoAim_readout_optimizer:
     def __init__(self, fPath=None, plot=False, run=False, runOutput=False):
+        """Optimizer fuction for readout data.
+
+        Args:
+            fPath (str, optional): The string of a Labberfile. Defaults to None.
+            plot (bool, optional): If True plots are shown. Defaults to False.
+            run (bool, optional): If True the experiments are run. Defaults to False.
+            runOutput (bool, optional): If True the final experiment showing rabi oscilations is run. Defaults to False.
+        """
         self.fPath = self.fPath_temp = fPath
         self.plot = plot
 
@@ -28,11 +37,17 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
             readoutVariable="Pulse Generator - Single-shot, QB1",
             oldData=None,
         ):
+            """Cost function using fidelity.
 
-            if oldData:
-                self.oldData = oldData
-            else:
-                self.oldData = {"value":[], "scoring":[]}
+            Args:
+                fPath (str, optional): The string of a Labberfile. Defaults to None.
+                plot (bool, optional): If True plots are shown. Defaults to False.
+                stepChannelName (str, optional): The string of the step channel name. If None the first index is used. Defaults to None.
+                readoutVariable (str, optional): The string of the readout varibal name. Defaults to "Pulse Generator - Single-shot, QB1".
+                oldData (array, optional): Data from experiment. Defaults to None.
+            """
+
+            self.oldData = oldData or {"value": [], "scoring": []}
             if fPath != None:
                 self.loopOverEntries(fPath, readoutVariable, stepChannelName)
 
@@ -40,6 +55,16 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
                     self.plotScoring()
 
         def calculateFidelity(self, v0, v1):
+            """Function to calculate fidelity. Returns the fidelity with a given error, given v0 and v1.
+
+            Args:
+                v0 (array): Voltage of the ground state data points.
+                v1 (array): Voltage of the first existed state data points.
+
+            Returns:
+                Fidelity (array): Fidelitys of inputs
+                Error (array): Errors of fidelity of inputs
+            """
             self.scoringName = "Fidelity"
 
             # Esitmate 0/1 mean (number)
@@ -47,7 +72,7 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
             mean1, sigma1 = np.mean(v1), np.std(v1) / np.sqrt(len(v1))
 
             # Esitmate rel distance
-            #dist00, dist01 = np.abs(v0 - mean0), np.abs(v0 - mean1)
+            # dist00, dist01 = np.abs(v0 - mean0), np.abs(v0 - mean1)
             dist0, dist1 = np.abs(v1 - mean0), np.abs(v1 - mean1)
 
             # Counts of 0/1 values
@@ -56,11 +81,11 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
 
             # Calulate outputs
             fidelity = 1 - n0 / float(n0 + n1)
-         
+
             w = (dist1 / sigma1) / (dist0 / sigma0)
             error = np.std(w) / np.sqrt(n0)
 
-            return fidelity, error 
+            return fidelity, error
 
         def loopOverEntries(
             self,
@@ -68,6 +93,13 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
             readoutVariable="Pulse Generator - Single-shot, QB1",
             stepChannelName=None,
         ):
+            """Function to loop over entries in the given data file.
+
+            Args:
+                fPath (str): The string of a Labberfile.
+                readoutVariable (str, optional): The string of the readout varibal name. Defaults to "Pulse Generator - Single-shot, QB1".
+                stepChannelName (_type_, optional): The string of the step channel name. Defaults to None.
+            """
             self.fileName = self._get_file_name_from_path(fPath)
 
             logIn = Labber.LogFile(fPath)
@@ -109,7 +141,18 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
                     self.scoring["error"][n],
                 ) = self.calculateFidelity(v0, v1)
 
-        def plotScoring(self):
+        def plotScoring(self, oldData=None):
+            """Function to plot scoring of fidelitys.
+
+            Args:
+                oldData (array, optional): Data from experiment. Defaults to None.
+            """
+
+            from scipy.signal import savgol_filter
+            from numpy.polynomial import polynomial as P
+            import warnings
+            import scipy
+
             plt.figure()
 
             for i, value in enumerate(self.oldData["value"]):
@@ -126,22 +169,61 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
                 fmt="",
             )
 
-            from scipy.signal import savgol_filter
-            fittedArray = savgol_filter(self.scoring["value"], 5, 3)
-            plt.plot(self.paramValues / self.paramScaling, fittedArray)
-
-
-
-            plt.title(
-                "{}\n {} vs {}".format(self.fileName, self.scoringName, self.paramName)
+            degree = 6
+            xmin, xmax = (
+                np.min(self.paramValues / self.paramScaling),
+                np.max(self.paramValues / self.paramScaling),
             )
+            xLinspace = np.linspace(xmin, xmax, 10)
+
+            fittedArray = savgol_filter(self.scoring["value"], 5, 3)
+            fittedArrayWithError = savgol_filter_werror(
+                self.scoring["value"], 5, 3, error=self.scoring["error"]
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", np.RankWarning)
+                z = np.polyfit(
+                    self.paramValues / self.paramScaling,
+                    self.scoring["value"],
+                    deg=degree,
+                    w=self.scoring["error"],
+                )
+
+            funcPoly = np.poly1d(z)
+            self.result = scipy.optimize.minimize_scalar(
+                -funcPoly, bounds=(xmin, xmax), method="bounded"
+            )
+
+            plt.plot(
+                self.paramValues / self.paramScaling, fittedArray, label="Normal SG"
+            )
+
+            plt.plot(
+                self.paramValues / self.paramScaling,
+                fittedArrayWithError,
+                label="Error SG",
+            )
+
+            plt.plot(xLinspace, funcPoly(xLinspace), label="Poly fit")
+
+            plt.title(f"{self.fileName}\n {self.scoringName} vs {self.paramName}")
             plt.xlabel(f"{self.paramName} [{self.paramUnit}]")
             plt.ylabel(self.scoringName)
+
+            plt.legend()
             plt.show()
 
         def value(self):
-            max_arg = np.argmax(self.scoring["value"])
-            return self.paramValues[max_arg], self.paramStepsize, self.scoring
+            """Function to calculate the return parameters.
+
+            Returns:
+                paramPeak (float): The maximum value of the peaks
+                paramStepsize (float): The size of the steps
+                oldDatai (array): The old data values
+            """
+            # max_arg = np.argmax(self.scoring["value"]) self.paramValues[max_arg]
+            return self.result.x, self.paramStepsize, self.scoring
 
         def _get_file_name_from_path(self, part="tail"):
             """Small function for getting the hit and sale of path.
@@ -172,7 +254,7 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
 
     def setParams(self, param=None):
         if self.fPath is None:
-            print("set file path (fPath)")
+            print("setParams: set file path (fPath)")
             self.params = None
         else:
             self.Lfile = Labber.LogFile(self.fPath)
@@ -183,7 +265,6 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
                 "RS Readout - Frequency": [],
                 "RS Readout - Power": [],
                 "Pulse Generator - Demodulation - Length": [],
-
             }
 
             self._updateDirLabber()
@@ -206,7 +287,7 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
 
     def setSpans(self, span=None):
         if self.fPath is None:
-            print("set file path (fPath)")
+            print("setSpans: set file path (fPath)")
             self.spans = None
         else:
             self.Lfile = Labber.LogFile(self.fPath)
@@ -241,7 +322,7 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
     def _checkDirLabber(self):
         for key in self.params.copy() or self.spans.copy():
             if key in [d["name"] for d in self.Lfile.getStepChannels()] == False:
-                print("Removed: {} \nAdd it to Step Channels in Labber.\n".format(key))
+                print(f"Removed: {key} \nAdd it to Step Channels in Labber.\n")
                 del self.params[key]
                 del self.spans[key]
 
@@ -251,14 +332,10 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
                 if key in [d["name"] for d in self.Lfile.getStepChannels()]:
                     self.params[key] = self.Lfile.getChannelValue(key)
                 else:
-                    print(
-                        "Removed: {} \nAdd it to Step Channels in Labber.\n".format(key)
-                    )
+                    print(f"Removed: {key} \nAdd it to Step Channels in Labber.\n")
                     del self.params[key]
             except Exception:
-                print(
-                        "Removed: {} \nAdd it to Step Channels in Labber.\n".format(key)
-                    )
+                print(f"Removed: {key} \nAdd it to Step Channels in Labber.\n")
                 del self.params[key]
 
     def setScanParams(
@@ -312,7 +389,7 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
                     )
 
                 # Second scan (fin scan)
-                self.scorings = {"value":[], "error":[], "paramValue":[]}
+                self.scorings = {"value": [], "error": [], "paramValue": []}
 
                 for _ in range(self.numberOfPasses):
                     Lfilename = msmt_data.performMeasurement(return_data=False)
@@ -323,12 +400,16 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
                         stepChannelName=param,
                         oldData=self.scorings,
                     ).value()
-                    
+
                     for key in self.scorings:
                         self.scorings[key].append(scorings_i[key])
 
                     print(param, paramPeak, paramStepsize)
-                    span = 2 * (paramStepsize / (self.numberOfPoints + 2)) * self.numberOfPoints
+                    span = (
+                        2
+                        * (paramStepsize / (self.numberOfPoints + 2))
+                        * self.numberOfPoints
+                    )
 
                     msmt_data.updateValue(param, span, itemType="SPAN")
                     msmt_data.updateValue(param, paramPeak, itemType="CENTER")
@@ -396,19 +477,26 @@ class ThreeSixtynNoScopeAutoAim_readout_optimizer:
 
         msmt_final.performMeasurement(return_data=False)
 
-"""
-fPath = "C:\\Users\\T5_2\Desktop\\Q2 Calibration\\q2_SS_temp_optimized_newdemod.hdf5"
-fPath = "C:\\Users\\T5_2\\Desktop\\Qubit calibration data\\Q5\\q5_SS_drive_onoff.hdf5"
 
-Three = ThreeSixtynNoScopeAutoAim_readout_optimizer(fPath, run=False, plot=True)
-Three.setScanParams(numberOfInitalPoints=10, numberOfPoints=8, numberOfReplabs=10)
-Three.setSpans({"RS Readout - Power": 10})
+if __name__ == "__main__":
+    fPath = (
+        "C:\\Users\\T5_2\Desktop\\Q2 Calibration\\q2_SS_temp_optimized_newdemod.hdf5"
+    )
+    # Three = ThreeSixtynNoScopeAutoAim_readout_optimizer(fPath, run=False, plot=True)
 
-Three.run()
-Three.runOutput()
-"""
+    """
+    fPath = "C:\\Users\\T5_2\Desktop\\Q2 Calibration\\q2_SS_temp_optimized_newdemod.hdf5"
+    fPath = "C:\\Users\\T5_2\\Desktop\\Qubit calibration data\\Q5\\q5_SS_drive_onoff.hdf5"
 
-Olddata = r"C:\Users\T5_2\Desktop\Qubit calibration data\Q5\q5_SS_drive_onoff_gen_data\q5_SS_drive_onoff_19_test.hdf5"
+    Three = ThreeSixtynNoScopeAutoAim_readout_optimizer(fPath, run=False, plot=True)
+    Three.setScanParams(numberOfInitalPoints=10, numberOfPoints=8, numberOfReplabs=10)
+    Three.setSpans({"RS Readout - Power": 10})
 
-Three = ThreeSixtynNoScopeAutoAim_readout_optimizer()
-Three.FidelitySS(Olddata, plot=True)
+    Three.run()
+    Three.runOutput()
+    """
+
+    Olddata = "q5_SS_drive_onoff_19_test.hdf5"
+
+    Three = ThreeSixtynNoScopeAutoAim_readout_optimizer()
+    Three.FidelitySS(Olddata, plot=True)
